@@ -122,8 +122,19 @@ app.post('/api/vapi-webhook', async (req, res) => {
 
 // Create a Vapi assistant for a client (white-label)
 app.post('/api/create-assistant', async (req, res) => {
-  const { businessName, businessType, city, hours, services, address, website } = req.body;
+  const { businessName, businessType, city, hours, services, address, website, calendly } = req.body;
   if (!businessName) return res.status(400).json({ error: 'businessName is required' });
+
+  const bookingSection = calendly
+    ? `BOOKING APPOINTMENTS:
+- Always ask if they want to book an appointment before ending the call
+- If they say yes, give them this link: ${calendly}
+- Say exactly: "You can book directly at ${calendly.replace('https://', '')}"
+- If they say no — that is fine, just let them know someone will follow up shortly`
+    : `BOOKING APPOINTMENTS:
+- Always ask if they want to book an appointment before ending the call
+- If they say yes — let them know someone will call them back to confirm a time
+- If they say no — that is fine, just let them know someone will follow up shortly`;
 
   const systemPrompt = `You are Nova, a warm and highly intelligent AI receptionist for ${businessName}, a ${businessType} located in ${city}.
 
@@ -136,18 +147,25 @@ BUSINESS INFO — answer these immediately and confidently:
 - Website: ${website || 'not available'}
 
 CONVERSATION RULES:
-- If someone asks about hours, answer immediately
-- If someone gives their name or number, confirm it back right away
+- If someone gives their name, confirm it back immediately
+- Never repeat a phone number back — it is captured automatically
 - If you don't understand something, say "I'm sorry, could you repeat that?"
 - Never ignore a question — always respond to what was just said
 - Sound natural, warm, and human — not robotic or scripted
-- Keep responses short — 1 to 2 sentences max
+- Keep responses under 2 sentences — this is a voice call
 - If you don't know something, say "Let me have someone follow up with you on that"
 
-GOAL EVERY CALL:
-Get the caller's name, phone number, and reason for calling before the call ends.
+${bookingSection}
 
-End every call with: "Perfect, I've got your information noted and someone will be in touch with you soon. Have a wonderful day!"`;
+GOAL EVERY CALL:
+1. Get the caller's name and reason for calling
+2. Always ask: "Would you like to book an appointment right now?"
+3. If yes — give them the Calendly link
+4. If no — confirm someone will follow up
+
+ENDING THE CALL:
+Say exactly this and nothing after: "Perfect, I've got your information noted and someone will be in touch with you soon. Have a wonderful day, goodbye!"
+Then immediately end the call.`;
 
   try {
     const vapiRes = await fetch('https://api.vapi.ai/assistant', {
