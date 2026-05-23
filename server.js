@@ -73,6 +73,68 @@ app.get('/api/leads', async (req, res) => {
   res.json(data);
 });
 
+// Parse requested booking time from transcript
+function parseBookingTime(transcript) {
+  const days = { sunday:0, monday:1, tuesday:2, wednesday:3, thursday:4, friday:5, saturday:6 };
+  const now = new Date();
+  let targetDate = null;
+  let targetHour = null;
+  let targetMinute = 0;
+
+  if (/tomorrow/i.test(transcript)) {
+    targetDate = new Date(now);
+    targetDate.setDate(targetDate.getDate() + 1);
+  }
+
+  const dayMatch = transcript.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
+  if (dayMatch && !targetDate) {
+    const targetDay = days[dayMatch[1].toLowerCase()];
+    targetDate = new Date(now);
+    const daysUntil = ((targetDay - targetDate.getDay()) + 7) % 7 || 7;
+    targetDate.setDate(targetDate.getDate() + daysUntil);
+  }
+
+  const timeMatch = transcript.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+  if (timeMatch) {
+    targetHour = parseInt(timeMatch[1]);
+    targetMinute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+    const ampm = timeMatch[3].toLowerCase();
+    if (ampm === 'pm' && targetHour < 12) targetHour += 12;
+    if (ampm === 'am' && targetHour === 12) targetHour = 0;
+  }
+
+  if (!targetDate) targetDate = new Date(now);
+  if (targetHour !== null) {
+    targetDate.setHours(targetHour, targetMinute, 0, 0);
+    return targetDate;
+  }
+  return null;
+}
+
+// Create a Cal.com booking
+async function createCalBooking(name, phone, startTime) {
+  const res = await fetch('https://api.cal.com/v2/bookings', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.CAL_API_KEY}`,
+      'Content-Type': 'application/json',
+      'cal-api-version': '2024-08-13'
+    },
+    body: JSON.stringify({
+      start: startTime.toISOString(),
+      eventTypeId: parseInt(process.env.CAL_EVENT_TYPE_ID),
+      attendee: {
+        name: name || 'Phone Caller',
+        email: `caller.${Date.now()}@nova-placeholder.com`,
+        timeZone: 'America/Toronto',
+        language: 'en'
+      },
+      metadata: { phone: phone || 'unknown', source: 'nova_phone_call' }
+    })
+  });
+  return await res.json();
+}
+
 // Vapi webhook — fires when a call ends
 app.post('/api/vapi-webhook', async (req, res) => {
   const msg = req.body?.message;
@@ -101,6 +163,14 @@ app.post('/api/vapi-webhook', async (req, res) => {
     .single();
 
   if (error) console.error('Supabase error:', error.message);
+
+  // Auto-create Cal.com booking if caller requested a time
+  const bookingTime = parseBookingTime(transcript);
+  if (bookingTime) {
+    createCalBooking(callerName, phone, bookingTime)
+      .then(b => console.log('Cal.com booking:', b?.uid || JSON.stringify(b)))
+      .catch(err => console.error('Cal.com error:', err.message));
+  }
 
   resend.emails.send({
     from: 'Nova <onboarding@resend.dev>',
