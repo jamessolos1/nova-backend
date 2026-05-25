@@ -12,6 +12,30 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANO
 const resend = new Resend(process.env.RESEND_API_KEY);
 const twilio = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
+async function makeOutboundCall(name, phone) {
+  if (!phone) return;
+  const cleaned = phone.replace(/\D/g, '');
+  const formatted = cleaned.length === 10 ? `+1${cleaned}` : `+${cleaned}`;
+  try {
+    const res = await fetch('https://api.vapi.ai/call/phone', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${process.env.VAPI_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phoneNumberId: process.env.VAPI_PHONE_NUMBER_ID,
+        assistantId: process.env.VAPI_ASSISTANT_ID,
+        customer: { number: formatted, name },
+        assistantOverrides: {
+          firstMessage: `Hi ${name}! This is Nova calling back from Nova AI Agency. You just reached out to us and I wanted to follow up right away — is this a good time to chat?`
+        }
+      })
+    });
+    const data = await res.json();
+    console.log('Outbound call placed to', formatted, '| ID:', data.id);
+  } catch (err) {
+    console.error('Outbound call error:', err.message);
+  }
+}
+
 async function sendSMS(to, message) {
   if (!to) return;
   const cleaned = to.replace(/\D/g, '');
@@ -55,6 +79,9 @@ app.post('/api/leads', async (req, res) => {
 
   // SMS follow-up to the lead
   sendSMS(phone, `Hi ${name}! Thanks for reaching out to us. We've received your message and will be in touch with you shortly. - Nova AI Agency`);
+
+  // Outbound call back within 60 seconds
+  if (phone) setTimeout(() => makeOutboundCall(name, phone), 60000);
 
   // Fire-and-forget notification email
   resend.emails.send({
