@@ -10,6 +10,19 @@ app.use(express.json());
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 const resend = new Resend(process.env.RESEND_API_KEY);
+const twilio = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+async function sendSMS(to, message) {
+  if (!to) return;
+  const cleaned = to.replace(/\D/g, '');
+  const formatted = cleaned.length === 10 ? `+1${cleaned}` : `+${cleaned}`;
+  try {
+    await twilio.messages.create({ body: message, from: process.env.TWILIO_PHONE, to: formatted });
+    console.log('SMS sent to', formatted);
+  } catch (err) {
+    console.error('SMS error:', err.message);
+  }
+}
 
 app.get('/', (req, res) => {
   res.json({ status: 'Nova backend running', version: '1.0.0' });
@@ -39,6 +52,9 @@ app.post('/api/leads', async (req, res) => {
     console.error('Supabase error:', error.message);
     return res.status(500).json({ error: error.message });
   }
+
+  // SMS follow-up to the lead
+  sendSMS(phone, `Hi ${name}! Thanks for reaching out to us. We've received your message and will be in touch with you shortly. - Nova AI Agency`);
 
   // Fire-and-forget notification email
   resend.emails.send({
@@ -163,6 +179,9 @@ app.post('/api/vapi-webhook', async (req, res) => {
     .single();
 
   if (error) console.error('Supabase error:', error.message);
+
+  // SMS follow-up to the caller
+  sendSMS(phone, `Hi ${callerName}! Thanks for calling us. We've got your info and someone will be in touch with you soon. - Nova AI Agency`);
 
   // Auto-create Cal.com booking if caller requested a time
   const bookingTime = parseBookingTime(transcript);
